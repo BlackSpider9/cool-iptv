@@ -406,7 +406,7 @@
       `).join('');
     }
 
-    // 播放频道（改进版：包含防 AbortError 异步打断机制）
+    // 播放频道（已加入解码器不兼容自动恢复容错）
     function playChannel(rawUrl, rawName, rawGroup) {
       const url = decodeURIComponent(rawUrl);
       const name = decodeURIComponent(rawName);
@@ -421,7 +421,6 @@
         finalUrl = CORS_PROXY + encodeURIComponent(url);
       }
 
-      // 1. 先安全暂停当前视频并销毁旧的 hls 实例，避免 AbortError 冲突
       try {
         video.pause();
         video.removeAttribute('src');
@@ -433,25 +432,46 @@
         console.warn('资源清理提示:', e);
       }
 
-      // 2. 加载新视频源并播放
       if (Hls.isSupported() && finalUrl.includes('.m3u8')) {
-        hls = new Hls();
+        // 配置 Hls 实例，增强容错和对复杂编码的恢复能力
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90
+        });
+
         hls.loadSource(finalUrl);
         hls.attachMedia(video);
+
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           video.play().catch(err => {
-            console.warn("自动播放被拦截或请求冲突:", err);
+            console.warn("自动播放被拦截:", err);
           });
         });
+
+        // 监听并自动处理解码器错误或媒体崩溃恢复
         hls.on(Hls.Events.ERROR, function (event, data) {
           if (data.fatal) {
-            console.error('HLS 致命错误:', data);
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.warn("发生网络错误，尝试恢复...");
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.warn("发生媒体/解码错误，尝试恢复缓冲区...", data);
+                hls.recoverMediaError();
+                break;
+              default:
+                console.error("无法恢复的致命错误，销毁播放器", data);
+                hls.destroy();
+                break;
+            }
           }
         });
       } else {
         video.src = finalUrl;
         video.play().catch(err => {
-          console.warn("原生播放失败或请求冲突:", err);
+          console.warn("原生播放失败:", err);
         });
       }
     }
