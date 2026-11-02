@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StreamPulse - IPTV 极简视频播放器</title>
+  <!-- Hls.js 用于播放 M3U8 流 -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    :root {
+      --bg-main: #0f172a;
+      --bg-sidebar: #1e293b;
+      --bg-card: #334155;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --danger: #ef4444;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* 顶栏 */
+    header {
+      height: 56px;
+      background-color: var(--bg-sidebar);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      z-index: 10;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: bold;
+      font-size: 1.1rem;
+    }
+
+    .controls-top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    select, button, input {
+      font-family: inherit;
+      font-size: 0.9rem;
+      border-radius: 6px;
+      outline: none;
+    }
+
+    select, input[type="text"] {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+    }
+
+    .btn {
+      background-color: var(--accent);
+      color: white;
+      border: none;
+      padding: 7px 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.2s;
+    }
+    .btn:hover { background-color: var(--accent-hover); }
+    .btn-secondary { background-color: var(--bg-card); color: var(--text-main); }
+    .btn-secondary:hover { background-color: #475569; }
+    .btn-danger { background-color: var(--danger); }
+
+    /* 主布局 */
+    .main-container {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* 左侧栏：频道列表 */
+    .sidebar {
+      width: 320px;
+      background-color: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .channel-list {
+      flex: 1;
+      overflow-y: auto;
+      list-style: none;
+    }
+
+    .channel-item {
+      padding: 10px 14px;
+      border-bottom: 1px solid #1e293b;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: background 0.15s;
+    }
+    .channel-item:hover { background-color: rgba(255,255,255,0.05); }
+    .channel-item.active { background-color: var(--accent); color: white; }
+
+    /* 右侧：播放窗口 */
+    .viewport {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background-color: #000;
+      position: relative;
+    }
+
+    .video-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    /* 空状态提示 */
+    .empty-state {
+      position: absolute;
+      text-align: center;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* 快捷控制栏 */
+    .video-toolbar {
+      background-color: var(--bg-sidebar);
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #475569;
+    }
+
+    /* 弹窗 */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.active { opacity: 1; pointer-events: auto; }
+    .modal {
+      background: var(--bg-sidebar);
+      padding: 20px;
+      border-radius: 8px;
+      width: 420px;
+      max-width: 90%;
+      border: 1px solid var(--border);
+    }
+    .modal-header { font-size: 1.1rem; font-weight: bold; margin-bottom: 12px; }
+    .modal-body { display: flex; flex-direction: column; gap: 12px; }
+    .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+
+  <!-- 顶栏 -->
+  <header>
+    <div class="logo">
+      📺 StreamPulse IPTV
+    </div>
+    <div class="controls-top">
+      <label style="font-size: 0.85rem; color: var(--text-muted);">订阅源:</label>
+      <select id="sourceSelect" onchange="switchSource(this.value)">
+        <!-- 动态生成源选项 -->
+      </select>
+      <button class="btn" onclick="openModal()">+ 添加源</button>
+    </div>
+  </header>
+
+  <!-- 主界面 -->
+  <div class="main-container">
+    <!-- 频道侧边栏 -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <input type="text" id="searchInput" placeholder="🔍 搜索频道..." oninput="filterChannels()">
+        <select id="groupSelect" onchange="filterChannels()">
+          <option value="ALL">全部分组</option>
+        </select>
+      </div>
+      <ul class="channel-list" id="channelList">
+        <!-- 频道列表项 -->
+      </ul>
+    </div>
+
+    <!-- 视频展示区 -->
+    <div class="viewport">
+      <div class="video-container">
+        <video id="videoPlayer" controls></video>
+        <div class="empty-state" id="emptyState">
+          <p style="font-size: 1.2rem;">未加载或无可用频道</p>
+          <button class="btn" onclick="openModal()">点击添加订阅源</button>
+        </div>
+      </div>
+
+      <!-- 底部播控面板 -->
+      <div class="video-toolbar">
+        <div>
+          <span id="currentChannelName" style="font-weight: bold;">请选择频道</span>
+          <span class="badge" id="currentGroup">未选择</span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <label style="font-size: 0.85rem; color: var(--text-muted);">
+            <input type="checkbox" id="corsProxyToggle" onchange="toggleCorsProxy()"> CORS 跨域代理
+          </label>
+          <select id="aspectRatioSelect" onchange="changeAspectRatio(this.value)">
+            <option value="contain">适应 (原始)</option>
+            <option value="fill">拉伸 (铺满)</option>
+            <option value="cover">裁剪 (16:9)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加源 模态框 -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-header">导入 IPTV 订阅源</div>
+      <div class="modal-body">
+        <label>订阅源名称：</label>
+        <input type="text" id="sourceNameInput" placeholder="例: 我的直播源">
+        
+        <label>M3U URL 链接：</label>
+        <input type="text" id="sourceUrlInput" placeholder="https://.../index.m3u">
+
+        <div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; margin: 4px 0;">或者</div>
+
+        <label>上传本地 M3U 文件：</label>
+        <input type="file" id="fileInput" accept=".m3u,.m3u8">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">取消</button>
+        <button class="btn" onclick="handleAddSource()">确认添加</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 基础状态
+    let sources = JSON.parse(localStorage.getItem('iptv_sources') || '[]');
+    let currentSourceId = localStorage.getItem('iptv_current_source_id') || '';
+    let currentChannels = [];
+    let hls = null;
+    let useCorsProxy = false;
+    const CORS_PROXY = 'https://corsproxy.io/?';
+
+    const video = document.getElementById('videoPlayer');
+
+    // 初始化
+    window.addEventListener('DOMContentLoaded', () => {
+      if (sources.length === 0) {
+        // 提供一个默认的测试源
+        sources.push({
+          id: 'default',
+          name: '内置测试源',
+          url: 'https://iptv-org.github.io/iptv/index.m3u'
+        });
+        currentSourceId = 'default';
+        saveSources();
+      }
+      renderSourceSelect();
+      loadCurrentSource();
+    });
+
+    function saveSources() {
+      localStorage.setItem('iptv_sources', JSON.stringify(sources));
+      localStorage.setItem('iptv_current_source_id', currentSourceId);
+    }
+
+    function renderSourceSelect() {
+      const select = document.getElementById('sourceSelect');
+      select.innerHTML = sources.map(s => `<option value="${s.id}" ${s.id === currentSourceId ? 'selected' : ''}>${s.name}</option>`).join('');
+    }
+
+    function switchSource(id) {
+      currentSourceId = id;
+      saveSources();
+      loadCurrentSource();
+    }
+
+    // 解析 M3U 文件
+    async function loadCurrentSource() {
+      const source = sources.find(s => s.id === currentSourceId);
+      if (!source) return;
+
+      document.getElementById('emptyState').style.display = 'flex';
+      document.getElementById('channelList').innerHTML = '<li>加载中...</li>';
+
+      try {
+        let content = '';
+        if (source.content) {
+          content = source.content;
+        } else if (source.url) {
+          let fetchUrl = source.url;
+          if (useCorsProxy) fetchUrl = CORS_PROXY + encodeURIComponent(source.url);
+          const res = await fetch(fetchUrl);
+          content = await res.text();
+        }
+
+        currentChannels = parseM3U(content);
+        renderGroups();
+        filterChannels();
+      } catch (err) {
+        alert('无法加载该订阅源，可能存在跨域问题或链接已失效。尝试勾选右下角 CORS 代理。');
+        document.getElementById('channelList').innerHTML = '<li style="padding:10px;color:red;">加载失败</li>';
+      }
+    }
+
+    function parseM3U(data) {
+      const lines = data.split('\n');
+      const channels = [];
+      let currentChannel = null;
+
+      lines.forEach(line => {
+        line = line.trim();
+        if (line.startsWith('#EXTINF:')) {
+          const name = line.split(',')[1] || '未命名频道';
+          const groupMatch = line.match(/group-title="([^"]+)"/);
+          const group = groupMatch ? groupMatch[1] : '其它';
+          currentChannel = { name, group };
+        } else if (line && !line.startsWith('#') && currentChannel) {
+          currentChannel.url = line;
+          channels.push(currentChannel);
+          currentChannel = null;
+        }
+      });
+      return channels;
+    }
+
+    function renderGroups() {
+      const groups = ['ALL', ...new Set(currentChannels.map(c => c.group))];
+      const select = document.getElementById('groupSelect');
+      select.innerHTML = groups.map(g => `<option value="${g}">${g === 'ALL' ? '全部分组' : g}</option>`).join('');
+    }
+
+    function filterChannels() {
+      const search = document.getElementById('searchInput').value.toLowerCase();
+      const group = document.getElementById('groupSelect').value;
+
+      const filtered = currentChannels.filter(c => {
+        const matchSearch = c.name.toLowerCase().includes(search);
+        const matchGroup = group === 'ALL' || c.group === group;
+        return matchSearch && matchGroup;
+      });
+
+      const listEl = document.getElementById('channelList');
+      listEl.innerHTML = filtered.map((c, i) => `
+        <li class="channel-item" onclick="playChannel('${encodeURIComponent(c.url)}', '${encodeURIComponent(c.name)}', '${encodeURIComponent(c.group)}')">
+          <span>${c.name}</span>
+          <span style="font-size:0.75rem; color:var(--text-muted);">${c.group}</span>
+        </li>
+      `).join('');
+    }
+
+    // 播放频道
+    function playChannel(rawUrl, rawName, rawGroup) {
+      const url = decodeURIComponent(rawUrl);
+      const name = decodeURIComponent(rawName);
+      const group = decodeURIComponent(rawGroup);
+
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('currentChannelName').innerText = name;
+      document.getElementById('currentGroup').innerText = group;
+
+      let finalUrl = url;
+      if (useCorsProxy && !url.startsWith(CORS_PROXY)) {
+        finalUrl = CORS_PROXY + encodeURIComponent(url);
+      }
+
+      if (Hls.isSupported() && finalUrl.includes('.m3u8')) {
+        if (hls) hls.destroy();
+        hls = new Hls();
+        hls.loadSource(finalUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+      } else {
+        video.src = finalUrl;
+        video.play();
+      }
+    }
+
+    // 常用面板切换功能
+    function toggleCorsProxy() {
+      useCorsProxy = document.getElementById('corsProxyToggle').checked;
+      loadCurrentSource();
+    }
+
+    function changeAspectRatio(mode) {
+      video.style.objectFit = mode;
+    }
+
+    // 弹窗逻辑
+    function openModal() { document.getElementById('modalOverlay').classList.add('active'); }
+    function closeModal() { document.getElementById('modalOverlay').classList.remove('active'); }
+
+    function handleAddSource() {
+      const name = document.getElementById('sourceNameInput').value || '新订阅源';
+      const url = document.getElementById('sourceUrlInput').value;
+      const fileInput = document.getElementById('fileInput');
+
+      if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const newSource = { id: Date.now().toString(), name, content: e.target.result };
+          sources.push(newSource);
+          currentSourceId = newSource.id;
+          saveSources();
+          renderSourceSelect();
+          loadCurrentSource();
+          closeModal();
+        };
+        reader.readAsText(file);
+      } else if (url) {
+        const newSource = { id: Date.now().toString(), name, url };
+        sources.push(newSource);
+        currentSourceId = newSource.id;
+        saveSources();
+        renderSourceSelect();
+        loadCurrentSource();
+        closeModal();
+      } else {
+        alert('请填入 M3U 链接或选择本地文件');
+      }
+    }
+  </script>
+</body>
+</html>
